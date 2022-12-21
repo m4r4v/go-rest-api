@@ -8,19 +8,19 @@ import (
 	"github.com/jmr-repo/go-rest-api/interfaces"
 )
 
-func HandlerNotFound(w http.ResponseWriter, r *http.Request) {
+func HandlerMethodNotAllowed(w http.ResponseWriter, r *http.Request) {
 
-	httpStatus := http.StatusNotFound
+	httpStatus := http.StatusMethodNotAllowed
 
 	response = &interfaces.IDefaultResponse{
 		Status:  httpStatus,
-		Message: "Error 404, your request was not found",
+		Message: "Error 405, your request method is not allowed",
 	}
 
 	jsonResponse, err := json.Marshal(response)
 
 	if err != nil {
-		log.Fatal("Error 404: " + err.Error())
+		log.Fatal("Error 405: " + err.Error())
 	}
 
 	w.Header().Set("Content-Type", "application/json")

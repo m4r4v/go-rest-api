@@ -9,8 +9,8 @@ import (
 	resources "github.com/jmr-repo/go-rest-api/resources"
 )
 
-var data = ServerData{
-	apiVersion: "v1",
+var data = &ServerData{
+	apiVersion: "/v1",
 	port:       "8080",
 }
 
@@ -25,14 +25,19 @@ func ServerRouter() {
 	// Handle Error 404
 	router.NotFoundHandler = http.HandlerFunc(handlers.HandlerNotFound)
 
+	// Handle Method Not Allowed
+	router.MethodNotAllowedHandler = http.HandlerFunc(handlers.HandlerMethodNotAllowed)
+
 	// subrouter so it can be used a version previously to any resource
 	path := router.PathPrefix(data.apiVersion).Subrouter()
 
 	// request handler resource
 	path.Use(handlers.HandlerRequestHandler)
 
+	// log.Println(auth.AuthorizationBearerToken(http.))
+
 	// index resource
-	path.HandleFunc("/", resources.ResourceIndex)
+	path.HandleFunc("/", resources.ResourceIndex).Methods("GET")
 
 	// print text to let knoe the server is running
 	log.Println("Listenting on Port: " + data.port)

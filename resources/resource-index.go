@@ -4,18 +4,34 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
-	"strconv"
 
-	handlers "github.com/jmr-repo/go-rest-api/handlers"
+	auth "github.com/jmr-repo/go-rest-api/auth"
+	interfaces "github.com/jmr-repo/go-rest-api/interfaces"
 )
+
+var response *interfaces.IDefaultResponse
 
 func ResourceIndex(w http.ResponseWriter, r *http.Request) {
 
-	httpStatus := http.StatusOK
+	// check if user is authorized or authenticated
+	if !auth.AuthorizationBearerToken(r.Header.Get("Authorization")) {
 
-	var response *handlers.DefaultResponse = &handlers.DefaultResponse{
-		Status:  strconv.Itoa(httpStatus),
-		Message: "hello world!",
+		response = &interfaces.IDefaultResponse{
+			Status:  http.StatusForbidden,
+			Message: "Error 403, you do no have permission to access this resource",
+		}
+
+		log.Println("Index Forbidden")
+
+	} else {
+
+		response = &interfaces.IDefaultResponse{
+			Status:  http.StatusOK,
+			Message: "Hello world!",
+		}
+
+		log.Println("Index")
+
 	}
 
 	jsonResponse, err := json.Marshal(response)
@@ -25,7 +41,7 @@ func ResourceIndex(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(httpStatus)
+	w.WriteHeader(response.Status)
 	w.Write(jsonResponse)
 
 }
