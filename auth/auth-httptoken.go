@@ -13,7 +13,8 @@ func AuthorizationBearerToken(t string) bool {
 		log.Fatal("Error in Bearer Token")
 	}
 
-	if len(strings.TrimSpace(token[1])) != 17 {
+	// Sha256 | 64 bits
+	if len(strings.TrimSpace(token[1])) != 64 {
 		return false
 	}
 
