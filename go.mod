@@ -1,4 +1,4 @@
-module github.com/jmr-repo/go-rest-api
+module github.com/m4r4v/go-rest-api
 
 go 1.19
 

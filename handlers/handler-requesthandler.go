@@ -3,7 +3,7 @@ package handlers
 import (
 	"net/http"
 
-	"github.com/jmr-repo/go-rest-api/interfaces"
+	"github.com/m4r4v/go-rest-api/interfaces"
 )
 
 var response *interfaces.IDefaultResponse

@@ -5,8 +5,8 @@ import (
 	"log"
 	"net/http"
 
-	auth "github.com/jmr-repo/go-rest-api/auth"
-	interfaces "github.com/jmr-repo/go-rest-api/interfaces"
+	auth "github.com/m4r4v/go-rest-api/auth"
+	interfaces "github.com/m4r4v/go-rest-api/interfaces"
 )
 
 var response *interfaces.IDefaultResponse

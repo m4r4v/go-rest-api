@@ -5,7 +5,7 @@ import (
 	"log"
 	"net/http"
 
-	"github.com/jmr-repo/go-rest-api/interfaces"
+	"github.com/m4r4v/go-rest-api/interfaces"
 )
 
 func HandlerMethodNotAllowed(w http.ResponseWriter, r *http.Request) {

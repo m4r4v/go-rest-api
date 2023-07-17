@@ -14,7 +14,7 @@ func AuthorizationBearerToken(t string) bool {
 	}
 
 	// Sha256 | 64 bits
-	if len(strings.TrimSpace(token[1])) != 64 {
+	if len(strings.TrimSpace(token[1])) != 2 {
 		return false
 	}
 

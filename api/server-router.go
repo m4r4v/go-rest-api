@@ -5,8 +5,8 @@ import (
 	"net/http"
 
 	"github.com/gorilla/mux"
-	handlers "github.com/jmr-repo/go-rest-api/handlers"
-	resources "github.com/jmr-repo/go-rest-api/resources"
+	handlers "github.com/m4r4v/go-rest-api/handlers"
+	resources "github.com/m4r4v/go-rest-api/resources"
 )
 
 var data = &ServerData{
@@ -38,6 +38,9 @@ func ServerRouter() {
 
 	// index resource
 	path.HandleFunc("/", resources.ResourceIndex).Methods("GET")
+
+	// users resource
+	path.HandleFunc("/users/", resources.ResourceIndex).Methods("POST")
 
 	// print text to let knoe the server is running
 	log.Println("Listenting on Port: " + data.port)
