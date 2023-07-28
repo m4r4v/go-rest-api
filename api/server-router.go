@@ -20,7 +20,8 @@ func ServerRouter() {
 	router := mux.NewRouter().StrictSlash(true)
 
 	// Set Headers to accept only JSON requests
-	router.Headers("Content-Type", "application/json")
+	// TODO
+	// Show Content Type error message in JSON
 
 	// Handle Error 404
 	router.NotFoundHandler = http.HandlerFunc(handlers.HandlerNotFound)
@@ -40,7 +41,7 @@ func ServerRouter() {
 	path.HandleFunc("/", resources.ResourceIndex).Methods("GET")
 
 	// users resource
-	path.HandleFunc("/users/", resources.ResourceIndex).Methods("POST")
+	path.HandleFunc("/users/{id}", resources.ResourceUsers).Methods("POST")
 
 	// print text to let knoe the server is running
 	log.Println("Listenting on Port: " + data.port)
