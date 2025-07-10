@@ -26,10 +26,10 @@ steps:
       '--platform', 'managed',
       '--allow-unauthenticated',
       '--port', '8080',
-      '--memory', '512Mi',
+      '--memory', '128Mi',
       '--cpu', '1',
       '--concurrency', '80',
-      '--max-instances', '100',
+      '--max-instances', '1',
       '--timeout', '300',
       '--set-env-vars', 'LOG_LEVEL=info'
     ]
