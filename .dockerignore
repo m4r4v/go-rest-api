@@ -1,0 +1,43 @@
+# Git
+.git
+.gitignore
+
+# Documentation
+README.md
+LICENSE
+
+# Environment files
+.env
+.env.example
+
+# Test files
+tests/
+*_test.go
+
+# Examples
+examples/
+
+# IDE files
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Build artifacts
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+main
+
+# Temporary files
+*.tmp
+*.temp
+*.log
+
+# Old files
+*_old.go
+cmd/server/router_old.go
