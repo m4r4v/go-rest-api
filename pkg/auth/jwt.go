@@ -2,21 +2,16 @@ package auth
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
-	"github.com/m4r4v/go-rest-api/pkg/config"
-	"github.com/m4r4v/go-rest-api/pkg/errors"
 	"golang.org/x/crypto/bcrypt"
 )
 
-type contextKey string
-
-const claimsKey contextKey = "claims"
-
-// Claims represents JWT claims
+// Claims represents the JWT claims
 type Claims struct {
 	UserID   string   `json:"user_id"`
 	Username string   `json:"username"`
@@ -26,29 +21,34 @@ type Claims struct {
 
 // AuthService handles authentication operations
 type AuthService struct {
-	config *config.AuthConfig
+	jwtSecret     []byte
+	jwtExpiration time.Duration
+	bcryptCost    int
 }
 
 // NewAuthService creates a new authentication service
-func NewAuthService(cfg *config.AuthConfig) *AuthService {
+func NewAuthService(jwtSecret string, jwtExpiration time.Duration, bcryptCost int) *AuthService {
 	return &AuthService{
-		config: cfg,
+		jwtSecret:     []byte(jwtSecret),
+		jwtExpiration: jwtExpiration,
+		bcryptCost:    bcryptCost,
 	}
 }
 
-// HashPassword hashes a password using bcrypt
-func (a *AuthService) HashPassword(password string) (string, error) {
-	bytes, err := bcrypt.GenerateFromPassword([]byte(password), a.config.BcryptCost)
-	if err != nil {
-		return "", err
+// NewAuthServiceFromConfig creates a new authentication service from config
+func NewAuthServiceFromConfig(cfg AuthConfig) *AuthService {
+	return &AuthService{
+		jwtSecret:     []byte(cfg.JWTSecret),
+		jwtExpiration: cfg.JWTExpiration,
+		bcryptCost:    cfg.BcryptCost,
 	}
-	return string(bytes), nil
 }
 
-// CheckPassword checks if a password matches the hash
-func (a *AuthService) CheckPassword(password, hash string) bool {
-	err := bcrypt.CompareHashAndPassword([]byte(hash), []byte(password))
-	return err == nil
+// AuthConfig represents auth configuration
+type AuthConfig struct {
+	JWTSecret     string
+	JWTExpiration time.Duration
+	BcryptCost    int
 }
 
 // GenerateToken generates a JWT token for a user
@@ -58,15 +58,16 @@ func (a *AuthService) GenerateToken(userID, username string, roles []string) (st
 		Username: username,
 		Roles:    roles,
 		RegisteredClaims: jwt.RegisteredClaims{
-			ExpiresAt: jwt.NewNumericDate(time.Now().Add(a.config.JWTExpiration)),
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(a.jwtExpiration)),
 			IssuedAt:  jwt.NewNumericDate(time.Now()),
 			NotBefore: jwt.NewNumericDate(time.Now()),
 			Issuer:    "go-rest-api",
+			Subject:   userID,
 		},
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	return token.SignedString([]byte(a.config.JWTSecret))
+	return token.SignedString(a.jwtSecret)
 }
 
 // ValidateToken validates a JWT token and returns the claims
@@ -75,7 +76,7 @@ func (a *AuthService) ValidateToken(tokenString string) (*Claims, error) {
 		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
 			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
 		}
-		return []byte(a.config.JWTSecret), nil
+		return a.jwtSecret, nil
 	})
 
 	if err != nil {
@@ -86,26 +87,33 @@ func (a *AuthService) ValidateToken(tokenString string) (*Claims, error) {
 		return claims, nil
 	}
 
-	return nil, fmt.Errorf("invalid token")
+	return nil, errors.New("invalid token")
+}
+
+// HashPassword hashes a password using bcrypt
+func (a *AuthService) HashPassword(password string) (string, error) {
+	bytes, err := bcrypt.GenerateFromPassword([]byte(password), a.bcryptCost)
+	return string(bytes), err
+}
+
+// CheckPassword checks if a password matches the hash
+func (a *AuthService) CheckPassword(password, hash string) bool {
+	err := bcrypt.CompareHashAndPassword([]byte(hash), []byte(password))
+	return err == nil
 }
 
 // ExtractBearerToken extracts the token from Authorization header
 func ExtractBearerToken(authHeader string) (string, error) {
 	if authHeader == "" {
-		return "", errors.Unauthorized("Authorization header is required")
+		return "", errors.New("authorization header is required")
 	}
 
 	parts := strings.Split(authHeader, " ")
-	if len(parts) != 2 || strings.ToLower(parts[0]) != "bearer" {
-		return "", errors.Unauthorized("Invalid authorization header format")
+	if len(parts) != 2 || parts[0] != "Bearer" {
+		return "", errors.New("authorization header must be Bearer token")
 	}
 
-	token := strings.TrimSpace(parts[1])
-	if token == "" {
-		return "", errors.Unauthorized("Token is required")
-	}
-
-	return token, nil
+	return parts[1], nil
 }
 
 // HasRole checks if the user has a specific role
@@ -128,14 +136,14 @@ func (c *Claims) HasAnyRole(roles ...string) bool {
 	return false
 }
 
-// SetClaimsInContext sets claims in the request context
-func SetClaimsInContext(ctx context.Context, claims *Claims) context.Context {
-	return context.WithValue(ctx, claimsKey, claims)
-}
+// Context keys for storing claims
+type contextKey string
 
-// GetClaimsFromContext gets claims from the request context
+const ClaimsContextKey contextKey = "claims"
+
+// GetClaimsFromContext retrieves claims from request context
 func GetClaimsFromContext(ctx context.Context) *Claims {
-	if claims, ok := ctx.Value(claimsKey).(*Claims); ok {
+	if claims, ok := ctx.Value(ClaimsContextKey).(*Claims); ok {
 		return claims
 	}
 	return nil

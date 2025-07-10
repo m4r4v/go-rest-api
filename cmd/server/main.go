@@ -8,72 +8,66 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"strconv"
 	"syscall"
 	"time"
 
 	"github.com/gorilla/mux"
-	"github.com/rs/cors"
+	"github.com/joho/godotenv"
+	"github.com/m4r4v/go-rest-api/internal/handlers"
+	"github.com/m4r4v/go-rest-api/pkg/auth"
+	"github.com/m4r4v/go-rest-api/pkg/config"
+	"github.com/m4r4v/go-rest-api/pkg/logger"
+	"github.com/m4r4v/go-rest-api/pkg/middleware"
 )
 
-// Response structure for API responses
-type APIResponse struct {
-	Success    bool        `json:"success"`
-	StatusCode int         `json:"status_code"`
-	Status     string      `json:"status"`
-	Data       interface{} `json:"data,omitempty"`
-	Error      interface{} `json:"error,omitempty"`
-	Timestamp  string      `json:"timestamp"`
-}
-
-// Health check response
-type HealthResponse struct {
-	Service   string `json:"service"`
-	Version   string `json:"version"`
-	Status    string `json:"status"`
-	Timestamp string `json:"timestamp"`
+// StandardResponse represents the standard API response format
+type StandardResponse struct {
+	HTTPStatusCode    string      `json:"http_status_code"`
+	HTTPStatusMessage string      `json:"http_status_message"`
+	Resource          string      `json:"resource"`
+	App               string      `json:"app"`
+	Timestamp         string      `json:"timestamp"`
+	Response          interface{} `json:"response"`
 }
 
 func main() {
-	// Get port from environment variable (required by Cloud Run)
-	port := os.Getenv("PORT")
-	if port == "" {
-		port = "8080" // Default fallback
+	// Load environment variables from .env file (for local development)
+	if err := godotenv.Load(); err != nil {
+		log.Println("No .env file found, using environment variables")
 	}
 
-	// Validate port
-	if _, err := strconv.Atoi(port); err != nil {
-		log.Fatalf("Invalid PORT environment variable: %s", port)
-	}
+	// Load configuration
+	cfg := config.Load()
 
-	log.Printf("Starting Go REST API Framework v2.0")
-	log.Printf("Port: %s", port)
+	// Initialize logger
+	logger.Init(cfg.Log.Level, cfg.Log.Format)
+
+	logger.Infof("Starting Go REST API Framework v2.0")
+	logger.Infof("Port: %s", cfg.Server.Port)
+
+	// Initialize auth service
+	authService := auth.NewAuthService(cfg.Auth.JWTSecret, cfg.Auth.JWTExpiration, cfg.Auth.BcryptCost)
+
+	// Initialize handlers
+	apiHandlers := handlers.NewAPIHandlers(authService)
 
 	// Setup routes
-	router := setupRoutes()
+	router := setupRoutes(apiHandlers, authService)
 
-	// Setup CORS
-	c := cors.New(cors.Options{
-		AllowedOrigins: []string{"*"},
-		AllowedMethods: []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
-		AllowedHeaders: []string{"*"},
-		ExposedHeaders: []string{"*"},
-	})
-
-	// Create HTTP server - IMPORTANT: Listen on 0.0.0.0 as required by Cloud Run
+	// Create HTTP server
 	server := &http.Server{
-		Addr:         fmt.Sprintf("0.0.0.0:%s", port),
-		Handler:      c.Handler(router),
-		ReadTimeout:  60 * time.Second,
-		WriteTimeout: 60 * time.Second,
-		IdleTimeout:  60 * time.Second,
+		Addr:         fmt.Sprintf("%s:%s", cfg.Server.Host, cfg.Server.Port),
+		Handler:      router,
+		ReadTimeout:  cfg.Server.ReadTimeout,
+		WriteTimeout: cfg.Server.WriteTimeout,
+		IdleTimeout:  cfg.Server.IdleTimeout,
 	}
 
 	// Start server in a goroutine
 	go func() {
-		log.Printf("Server starting on %s", server.Addr)
+		logger.Infof("Server starting on %s", server.Addr)
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("Server failed to start: %v", err)
+			logger.Fatalf("Server failed to start: %v", err)
 		}
 	}()
 
@@ -82,7 +76,7 @@ func main() {
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
 
-	log.Println("Shutting down server...")
+	logger.Info("Shutting down server...")
 
 	// Create a deadline for shutdown (Cloud Run gives 10 seconds)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -90,152 +84,167 @@ func main() {
 
 	// Attempt graceful shutdown
 	if err := server.Shutdown(ctx); err != nil {
-		log.Printf("Server forced to shutdown: %v", err)
+		logger.Errorf("Server forced to shutdown: %v", err)
 	}
 
-	log.Println("Server exited")
+	logger.Info("Server exited")
 }
 
-// setupRoutes configures all API routes
-func setupRoutes() *mux.Router {
+// setupRoutes configures all API routes according to the specification
+func setupRoutes(apiHandlers *handlers.APIHandlers, authService *auth.AuthService) *mux.Router {
 	router := mux.NewRouter()
 
-	// Health check endpoint (required for Cloud Run)
+	// Apply global middleware
+	router.Use(middleware.LoggingMiddleware)
+	router.Use(middleware.RecoveryMiddleware)
+	router.Use(middleware.CORSMiddleware)
+
+	// Public endpoints (no authentication required)
+
+	// /setup - Setup SuperAdmin account (POST only)
+	router.HandleFunc("/setup", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			writeStandardError(w, http.StatusMethodNotAllowed, "/setup", "Method not allowed")
+			return
+		}
+		apiHandlers.Setup(w, r)
+	}).Methods("POST", "OPTIONS")
+
+	// /login - User authentication (POST only)
+	router.HandleFunc("/login", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			writeStandardError(w, http.StatusMethodNotAllowed, "/login", "Method not allowed")
+			return
+		}
+		apiHandlers.Login(w, r)
+	}).Methods("POST", "OPTIONS")
+
+	// /status - Server status check (GET only)
+	router.HandleFunc("/status", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			writeStandardError(w, http.StatusMethodNotAllowed, "/status", "Method not allowed")
+			return
+		}
+		statusHandler(w, r)
+	}).Methods("GET", "OPTIONS")
+
+	// /v1/ping - Sample resource (GET only)
+	router.HandleFunc("/v1/ping", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			writeStandardError(w, http.StatusMethodNotAllowed, "/v1/ping", "Method not allowed")
+			return
+		}
+		pingHandler(w, r)
+	}).Methods("GET", "OPTIONS")
+
+	// Protected routes (require authentication)
+	protected := router.PathPrefix("/v1").Subrouter()
+	protected.Use(middleware.AuthMiddleware(authService))
+
+	// User management endpoints
+	protected.HandleFunc("/users/me", apiHandlers.GetMe).Methods("GET")
+	protected.HandleFunc("/users/me", apiHandlers.UpdateMe).Methods("PUT")
+
+	// Resource management endpoints
+	protected.HandleFunc("/resources", apiHandlers.ListResources).Methods("GET")
+	protected.HandleFunc("/resources", apiHandlers.CreateResource).Methods("POST")
+	protected.HandleFunc("/resources/{id}", apiHandlers.GetResource).Methods("GET")
+	protected.HandleFunc("/resources/{id}", apiHandlers.UpdateResource).Methods("PUT")
+	protected.HandleFunc("/resources/{id}", apiHandlers.DeleteResource).Methods("DELETE")
+
+	// Admin-only routes
+	admin := protected.PathPrefix("/admin").Subrouter()
+	admin.Use(middleware.RequireRole("admin"))
+
+	admin.HandleFunc("/users", apiHandlers.ListUsers).Methods("GET")
+	admin.HandleFunc("/users", apiHandlers.CreateUser).Methods("POST")
+	admin.HandleFunc("/users/{id}", apiHandlers.UpdateUserByAdmin).Methods("PUT")
+	admin.HandleFunc("/users/{id}", apiHandlers.DeleteUser).Methods("DELETE")
+
+	// Health check endpoint (for Cloud Run)
 	router.HandleFunc("/health", healthHandler).Methods("GET")
-	router.HandleFunc("/", rootHandler).Methods("GET")
-
-	// API v1 routes
-	v1 := router.PathPrefix("/v1").Subrouter()
-
-	// Basic endpoints
-	v1.HandleFunc("/status", statusHandler).Methods("GET")
-	v1.HandleFunc("/ping", pingHandler).Methods("GET")
-
-	// Add logging middleware
-	router.Use(loggingMiddleware)
-	router.Use(recoveryMiddleware)
 
 	return router
 }
 
-// Health check handler
-func healthHandler(w http.ResponseWriter, r *http.Request) {
-	response := APIResponse{
-		Success:    true,
-		StatusCode: http.StatusOK,
-		Status:     "OK",
-		Data: HealthResponse{
-			Service:   "go-rest-api",
-			Version:   "2.0.0",
-			Status:    "healthy",
-			Timestamp: time.Now().Format(time.RFC3339),
-		},
-		Timestamp: time.Now().Format(time.RFC3339),
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(response)
-}
-
-// Root handler
-func rootHandler(w http.ResponseWriter, r *http.Request) {
-	response := APIResponse{
-		Success:    true,
-		StatusCode: http.StatusOK,
-		Status:     "OK",
-		Data: map[string]interface{}{
-			"message": "Welcome to Go REST API Framework v2.0",
-			"version": "2.0.0",
-			"endpoints": map[string]string{
-				"health": "/health",
-				"status": "/v1/status",
-				"ping":   "/v1/ping",
-			},
-		},
-		Timestamp: time.Now().Format(time.RFC3339),
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(response)
-}
-
-// Status handler
+// statusHandler handles the /status endpoint
 func statusHandler(w http.ResponseWriter, r *http.Request) {
-	response := APIResponse{
-		Success:    true,
-		StatusCode: http.StatusOK,
-		Status:     "OK",
-		Data: map[string]interface{}{
+	response := StandardResponse{
+		HTTPStatusCode:    "200",
+		HTTPStatusMessage: "OK",
+		Resource:          "/status",
+		App:               "Go REST API Framework",
+		Timestamp:         time.Now().Format(time.RFC3339),
+		Response: map[string]interface{}{
+			"status":  "healthy",
+			"version": "2.0.0",
+			"uptime":  "N/A",
+		},
+	}
+
+	writeStandardResponse(w, response)
+}
+
+// pingHandler handles the /v1/ping endpoint
+func pingHandler(w http.ResponseWriter, r *http.Request) {
+	response := StandardResponse{
+		HTTPStatusCode:    "200",
+		HTTPStatusMessage: "OK",
+		Resource:          "/v1/ping",
+		App:               "Go REST API Framework",
+		Timestamp:         time.Now().Format(time.RFC3339),
+		Response: map[string]interface{}{
+			"message": "pong",
+		},
+	}
+
+	writeStandardResponse(w, response)
+}
+
+// healthHandler handles the /health endpoint for Cloud Run
+func healthHandler(w http.ResponseWriter, r *http.Request) {
+	response := StandardResponse{
+		HTTPStatusCode:    "200",
+		HTTPStatusMessage: "OK",
+		Resource:          "/health",
+		App:               "Go REST API Framework",
+		Timestamp:         time.Now().Format(time.RFC3339),
+		Response: map[string]interface{}{
+			"status":    "healthy",
 			"service":   "go-rest-api",
 			"version":   "2.0.0",
-			"status":    "running",
-			"uptime":    "N/A",
 			"timestamp": time.Now().Format(time.RFC3339),
-			"environment": map[string]string{
-				"port": os.Getenv("PORT"),
-				"host": "0.0.0.0",
+		},
+	}
+
+	writeStandardResponse(w, response)
+}
+
+// writeStandardResponse writes a response in the standard format
+func writeStandardResponse(w http.ResponseWriter, response StandardResponse) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(response)
+}
+
+// writeStandardError writes an error response in the standard format
+func writeStandardError(w http.ResponseWriter, statusCode int, resource, message string) {
+	response := StandardResponse{
+		HTTPStatusCode:    fmt.Sprintf("%d", statusCode),
+		HTTPStatusMessage: http.StatusText(statusCode),
+		Resource:          resource,
+		App:               "Go REST API Framework",
+		Timestamp:         time.Now().Format(time.RFC3339),
+		Response: map[string]interface{}{
+			"error": map[string]interface{}{
+				"message": message,
 			},
 		},
-		Timestamp: time.Now().Format(time.RFC3339),
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.WriteHeader(statusCode)
 	json.NewEncoder(w).Encode(response)
-}
-
-// Ping handler
-func pingHandler(w http.ResponseWriter, r *http.Request) {
-	response := APIResponse{
-		Success:    true,
-		StatusCode: http.StatusOK,
-		Status:     "OK",
-		Data: map[string]interface{}{
-			"message":   "pong",
-			"timestamp": time.Now().Format(time.RFC3339),
-		},
-		Timestamp: time.Now().Format(time.RFC3339),
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(response)
-}
-
-// Logging middleware
-func loggingMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		start := time.Now()
-		next.ServeHTTP(w, r)
-		log.Printf("%s %s %s", r.Method, r.RequestURI, time.Since(start))
-	})
-}
-
-// Recovery middleware
-func recoveryMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		defer func() {
-			if err := recover(); err != nil {
-				log.Printf("Panic recovered: %v", err)
-
-				response := APIResponse{
-					Success:    false,
-					StatusCode: http.StatusInternalServerError,
-					Status:     "Internal Server Error",
-					Error: map[string]interface{}{
-						"code":    "INTERNAL_ERROR",
-						"message": "An internal server error occurred",
-					},
-					Timestamp: time.Now().Format(time.RFC3339),
-				}
-
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(http.StatusInternalServerError)
-				json.NewEncoder(w).Encode(response)
-			}
-		}()
-		next.ServeHTTP(w, r)
-	})
 }

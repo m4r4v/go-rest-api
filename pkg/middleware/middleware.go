@@ -1,172 +1,57 @@
 package middleware
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
-	"runtime/debug"
 	"time"
 
 	"github.com/m4r4v/go-rest-api/pkg/auth"
-	"github.com/m4r4v/go-rest-api/pkg/config"
 	"github.com/m4r4v/go-rest-api/pkg/errors"
 	"github.com/m4r4v/go-rest-api/pkg/logger"
-	"github.com/rs/cors"
-	"golang.org/x/time/rate"
 )
 
-// Middleware represents a middleware function
-type Middleware func(http.Handler) http.Handler
-
-// Chain applies middlewares to a handler
-func Chain(h http.Handler, middlewares ...Middleware) http.Handler {
-	for i := len(middlewares) - 1; i >= 0; i-- {
-		h = middlewares[i](h)
-	}
-	return h
-}
-
-// Logger middleware logs HTTP requests
-func Logger() Middleware {
-	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			start := time.Now()
-
-			// Create a response writer wrapper to capture status code
-			wrapped := &responseWriter{ResponseWriter: w, statusCode: http.StatusOK}
-
-			next.ServeHTTP(wrapped, r)
-
-			logger.WithFields(logger.GetLogger().WithFields(map[string]interface{}{
-				"method":      r.Method,
-				"path":        r.URL.Path,
-				"status":      wrapped.statusCode,
-				"duration":    time.Since(start),
-				"remote_addr": r.RemoteAddr,
-				"user_agent":  r.UserAgent(),
-			}).Data).Info("HTTP Request")
-		})
-	}
-}
-
-// Recovery middleware recovers from panics
-func Recovery() Middleware {
-	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			defer func() {
-				if err := recover(); err != nil {
-					logger.WithFields(logger.GetLogger().WithFields(map[string]interface{}{
-						"error": err,
-						"stack": string(debug.Stack()),
-						"path":  r.URL.Path,
-					}).Data).Error("Panic recovered")
-
-					appErr := errors.InternalServerError("Internal server error")
-					writeErrorResponse(w, appErr)
-				}
-			}()
-
-			next.ServeHTTP(w, r)
-		})
-	}
-}
-
-// CORS middleware handles Cross-Origin Resource Sharing
-func CORS(cfg *config.Config) Middleware {
-	c := cors.New(cors.Options{
-		AllowedOrigins:   []string{"*"}, // Configure based on your needs
-		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
-		AllowedHeaders:   []string{"*"},
-		ExposedHeaders:   []string{"*"},
-		AllowCredentials: true,
-		MaxAge:           300,
-	})
-
-	return func(next http.Handler) http.Handler {
-		return c.Handler(next)
-	}
-}
-
-// RateLimit middleware implements rate limiting
-func RateLimit(requestsPerSecond int, burst int) Middleware {
-	limiter := rate.NewLimiter(rate.Limit(requestsPerSecond), burst)
-
-	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if !limiter.Allow() {
-				appErr := errors.NewAppError("RATE_LIMIT_EXCEEDED", "Rate limit exceeded", http.StatusTooManyRequests)
-				writeErrorResponse(w, appErr)
-				return
-			}
-
-			next.ServeHTTP(w, r)
-		})
-	}
-}
-
-// ContentType middleware enforces JSON content type for specific methods
-func ContentType() Middleware {
-	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			// Only check content type for methods that typically have a body
-			if r.Method == "POST" || r.Method == "PUT" || r.Method == "PATCH" {
-				contentType := r.Header.Get("Content-Type")
-				if contentType != "application/json" {
-					appErr := errors.BadRequest("Content-Type must be application/json")
-					writeErrorResponse(w, appErr)
-					return
-				}
-			}
-
-			// Set response content type
-			w.Header().Set("Content-Type", "application/json")
-			next.ServeHTTP(w, r)
-		})
-	}
-}
-
-// Auth middleware validates JWT tokens
-func Auth(authService *auth.AuthService) Middleware {
+// AuthMiddleware validates JWT tokens and sets user context
+func AuthMiddleware(authService *auth.AuthService) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			authHeader := r.Header.Get("Authorization")
+			if authHeader == "" {
+				writeErrorResponse(w, errors.Unauthorized("Authorization header is required"))
+				return
+			}
 
 			token, err := auth.ExtractBearerToken(authHeader)
 			if err != nil {
-				writeErrorResponse(w, err.(*errors.AppError))
+				writeErrorResponse(w, errors.Unauthorized("Invalid authorization header format"))
 				return
 			}
 
 			claims, err := authService.ValidateToken(token)
 			if err != nil {
-				appErr := errors.Unauthorized("Invalid or expired token")
-				writeErrorResponse(w, appErr)
+				writeErrorResponse(w, errors.Unauthorized("Invalid or expired token"))
 				return
 			}
 
 			// Add claims to request context
-			ctx := r.Context()
-			ctx = auth.SetClaimsInContext(ctx, claims)
-			r = r.WithContext(ctx)
-
-			next.ServeHTTP(w, r)
+			ctx := context.WithValue(r.Context(), auth.ClaimsContextKey, claims)
+			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
 }
 
 // RequireRole middleware checks if user has required role
-func RequireRole(roles ...string) Middleware {
+func RequireRole(roles ...string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			claims := auth.GetClaimsFromContext(r.Context())
 			if claims == nil {
-				appErr := errors.Unauthorized("Authentication required")
-				writeErrorResponse(w, appErr)
+				writeErrorResponse(w, errors.Unauthorized("Authentication required"))
 				return
 			}
 
 			if !claims.HasAnyRole(roles...) {
-				appErr := errors.Forbidden("Insufficient permissions")
-				writeErrorResponse(w, appErr)
+				writeErrorResponse(w, errors.Forbidden("Insufficient permissions"))
 				return
 			}
 
@@ -175,19 +60,56 @@ func RequireRole(roles ...string) Middleware {
 	}
 }
 
-// Security middleware adds security headers
-func Security() Middleware {
-	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("X-Content-Type-Options", "nosniff")
-			w.Header().Set("X-Frame-Options", "DENY")
-			w.Header().Set("X-XSS-Protection", "1; mode=block")
-			w.Header().Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
-			w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
+// LoggingMiddleware logs HTTP requests
+func LoggingMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
 
-			next.ServeHTTP(w, r)
-		})
-	}
+		// Create a response writer wrapper to capture status code
+		wrapped := &responseWriter{ResponseWriter: w, statusCode: http.StatusOK}
+
+		next.ServeHTTP(wrapped, r)
+
+		duration := time.Since(start)
+
+		logger.Infof("HTTP %s %s %d %v %s",
+			r.Method,
+			r.RequestURI,
+			wrapped.statusCode,
+			duration,
+			r.RemoteAddr,
+		)
+	})
+}
+
+// RecoveryMiddleware recovers from panics
+func RecoveryMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer func() {
+			if err := recover(); err != nil {
+				logger.Errorf("Panic recovered: %v", err)
+				writeErrorResponse(w, errors.InternalServerError("An internal server error occurred"))
+			}
+		}()
+		next.ServeHTTP(w, r)
+	})
+}
+
+// CORSMiddleware handles CORS headers
+func CORSMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+		w.Header().Set("Access-Control-Expose-Headers", "*")
+
+		if r.Method == "OPTIONS" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+
+		next.ServeHTTP(w, r)
+	})
 }
 
 // responseWriter wraps http.ResponseWriter to capture status code
@@ -201,11 +123,25 @@ func (rw *responseWriter) WriteHeader(code int) {
 	rw.ResponseWriter.WriteHeader(code)
 }
 
-// writeErrorResponse writes an error response
+// writeErrorResponse writes an error response in the standard format
 func writeErrorResponse(w http.ResponseWriter, appErr *errors.AppError) {
-	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.WriteHeader(appErr.Status)
 
-	response := errors.ErrorResponse(appErr)
+	response := map[string]interface{}{
+		"http_status_code":    appErr.Status,
+		"http_status_message": http.StatusText(appErr.Status),
+		"resource":            "",
+		"app":                 "Go REST API Framework",
+		"timestamp":           time.Now().Format(time.RFC3339),
+		"response": map[string]interface{}{
+			"error": map[string]interface{}{
+				"code":    appErr.Code,
+				"message": appErr.Message,
+			},
+		},
+	}
+
 	json.NewEncoder(w).Encode(response)
 }

@@ -3,14 +3,14 @@ steps:
   - name: 'gcr.io/cloud-builders/docker'
     args: [
       'build',
-      '-t', 'gcr.io/$PROJECT_ID/go-rest-api:$COMMIT_SHA',
+      '-t', 'gcr.io/$PROJECT_ID/go-rest-api:$BUILD_ID',
       '-t', 'gcr.io/$PROJECT_ID/go-rest-api:latest',
       '.'
     ]
 
   # Push the container image to Container Registry
   - name: 'gcr.io/cloud-builders/docker'
-    args: ['push', 'gcr.io/$PROJECT_ID/go-rest-api:$COMMIT_SHA']
+    args: ['push', 'gcr.io/$PROJECT_ID/go-rest-api:$BUILD_ID']
 
   # Push the latest tag
   - name: 'gcr.io/cloud-builders/docker'
@@ -21,23 +21,23 @@ steps:
     entrypoint: gcloud
     args: [
       'run', 'deploy', 'go-rest-api',
-      '--image=gcr.io/$PROJECT_ID/go-rest-api:$COMMIT_SHA',
+      '--image=gcr.io/$PROJECT_ID/go-rest-api:$BUILD_ID',
       '--region=us-central1',
       '--platform=managed',
       '--allow-unauthenticated',
       '--port=8080',
-      '--memory=128Mi',
+      '--memory=512Mi',
       '--cpu=1',
       '--concurrency=80',
       '--min-instances=0',
       '--max-instances=1',
       '--timeout=300',
-      '--execution-environment=gen1'
+      '--execution-environment=gen2'
     ]
 
 # Store images in Container Registry
 images:
-  - 'gcr.io/$PROJECT_ID/go-rest-api:$COMMIT_SHA'
+  - 'gcr.io/$PROJECT_ID/go-rest-api:$BUILD_ID'
   - 'gcr.io/$PROJECT_ID/go-rest-api:latest'
 
 # Build options

@@ -10,6 +10,7 @@ var (
 	ErrUserExists       = errors.New("user already exists")
 	ErrUserNotFound     = errors.New("user not found")
 	ErrResourceNotFound = errors.New("resource not found")
+	ErrLogNotFound      = errors.New("log not found")
 )
 
 // User represents a user in the system

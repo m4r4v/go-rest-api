@@ -3,32 +3,35 @@ package logger
 import (
 	"os"
 
-	"github.com/m4r4v/go-rest-api/pkg/config"
 	"github.com/sirupsen/logrus"
 )
 
 var log *logrus.Logger
 
-// Init initializes the logger with the given configuration
-func Init(cfg *config.LoggerConfig) {
+// Init initializes the logger
+func Init(level, format string) {
 	log = logrus.New()
 
 	// Set log level
-	level, err := logrus.ParseLevel(cfg.Level)
-	if err != nil {
-		level = logrus.InfoLevel
+	switch level {
+	case "debug":
+		log.SetLevel(logrus.DebugLevel)
+	case "info":
+		log.SetLevel(logrus.InfoLevel)
+	case "warn":
+		log.SetLevel(logrus.WarnLevel)
+	case "error":
+		log.SetLevel(logrus.ErrorLevel)
+	default:
+		log.SetLevel(logrus.InfoLevel)
 	}
-	log.SetLevel(level)
 
 	// Set log format
-	if cfg.Format == "json" {
-		log.SetFormatter(&logrus.JSONFormatter{
-			TimestampFormat: "2006-01-02 15:04:05",
-		})
+	if format == "json" {
+		log.SetFormatter(&logrus.JSONFormatter{})
 	} else {
 		log.SetFormatter(&logrus.TextFormatter{
-			FullTimestamp:   true,
-			TimestampFormat: "2006-01-02 15:04:05",
+			FullTimestamp: true,
 		})
 	}
 
@@ -38,11 +41,7 @@ func Init(cfg *config.LoggerConfig) {
 // GetLogger returns the logger instance
 func GetLogger() *logrus.Logger {
 	if log == nil {
-		// Initialize with default config if not initialized
-		Init(&config.LoggerConfig{
-			Level:  "info",
-			Format: "json",
-		})
+		Init("info", "json")
 	}
 	return log
 }
@@ -95,14 +94,4 @@ func Fatal(args ...interface{}) {
 // Fatalf logs a formatted fatal message and exits
 func Fatalf(format string, args ...interface{}) {
 	GetLogger().Fatalf(format, args...)
-}
-
-// WithField creates a new entry with a single field
-func WithField(key string, value interface{}) *logrus.Entry {
-	return GetLogger().WithField(key, value)
-}
-
-// WithFields creates a new entry with multiple fields
-func WithFields(fields logrus.Fields) *logrus.Entry {
-	return GetLogger().WithFields(fields)
 }
