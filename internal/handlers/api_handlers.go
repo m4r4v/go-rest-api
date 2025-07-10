@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -40,14 +41,13 @@ func NewAPIHandlers(authService *auth.AuthService) *APIHandlers {
 func (h *APIHandlers) Setup(w http.ResponseWriter, r *http.Request) {
 	// Check if setup is already complete
 	if h.db.IsSetupComplete() {
-		err := errors.BadRequest("Setup already completed")
-		h.writeErrorResponse(w, err)
+		h.writeStandardError(w, http.StatusBadRequest, "/setup", "Setup already completed")
 		return
 	}
 
 	var req validation.RegisterRequest
 	if err := validation.ValidateJSON(r, &req); err != nil {
-		h.writeErrorResponse(w, err)
+		h.writeStandardError(w, http.StatusBadRequest, "/setup", err.Error())
 		return
 	}
 
@@ -55,8 +55,7 @@ func (h *APIHandlers) Setup(w http.ResponseWriter, r *http.Request) {
 	hashedPassword, err := h.authService.HashPassword(req.Password)
 	if err != nil {
 		logger.Errorf("Failed to hash password: %v", err)
-		appErr := errors.InternalServerError("Failed to process setup")
-		h.writeErrorResponse(w, appErr)
+		h.writeStandardError(w, http.StatusInternalServerError, "/setup", "Failed to process setup")
 		return
 	}
 
@@ -72,8 +71,7 @@ func (h *APIHandlers) Setup(w http.ResponseWriter, r *http.Request) {
 	// Save admin user
 	if err := h.db.CreateUser(adminUser); err != nil {
 		logger.Errorf("Failed to create admin user: %v", err)
-		appErr := errors.InternalServerError("Failed to create admin user")
-		h.writeErrorResponse(w, appErr)
+		h.writeStandardError(w, http.StatusInternalServerError, "/setup", "Failed to create admin user")
 		return
 	}
 
@@ -83,12 +81,11 @@ func (h *APIHandlers) Setup(w http.ResponseWriter, r *http.Request) {
 	logger.Infof("Initial setup completed. Admin user created: %s", adminUser.Username)
 
 	response := map[string]interface{}{
-		"message":  "Setup completed successfully",
-		"admin_id": adminUser.ID,
-		"username": adminUser.Username,
+		"message":        "Now please login in order to get you the authorization token",
+		"login_endpoint": "/login",
 	}
 
-	h.writeSuccessResponse(w, response)
+	h.writeStandardResponse(w, http.StatusAccepted, "/setup", response)
 }
 
 // Authentication Endpoints
@@ -97,22 +94,20 @@ func (h *APIHandlers) Setup(w http.ResponseWriter, r *http.Request) {
 func (h *APIHandlers) Login(w http.ResponseWriter, r *http.Request) {
 	var req validation.LoginRequest
 	if err := validation.ValidateJSON(r, &req); err != nil {
-		h.writeErrorResponse(w, err)
+		h.writeStandardError(w, http.StatusBadRequest, "/login", err.Error())
 		return
 	}
 
 	// Find user in database
 	user, err := h.db.GetUser(req.Username)
 	if err != nil {
-		appErr := errors.Unauthorized("Invalid credentials")
-		h.writeErrorResponse(w, appErr)
+		h.writeStandardError(w, http.StatusUnauthorized, "/login", "Invalid credentials")
 		return
 	}
 
 	// Validate password
 	if !h.authService.CheckPassword(req.Password, user.Password) {
-		appErr := errors.Unauthorized("Invalid credentials")
-		h.writeErrorResponse(w, appErr)
+		h.writeStandardError(w, http.StatusUnauthorized, "/login", "Invalid credentials")
 		return
 	}
 
@@ -125,18 +120,15 @@ func (h *APIHandlers) Login(w http.ResponseWriter, r *http.Request) {
 	token, err := h.authService.GenerateToken(user.ID, user.Username, roles)
 	if err != nil {
 		logger.Errorf("Failed to generate token: %v", err)
-		appErr := errors.InternalServerError("Failed to generate token")
-		h.writeErrorResponse(w, appErr)
+		h.writeStandardError(w, http.StatusInternalServerError, "/login", "Failed to generate token")
 		return
 	}
 
 	response := map[string]interface{}{
-		"token":    token,
-		"username": user.Username,
-		"role":     user.Role,
+		"token": token,
 	}
 
-	h.writeSuccessResponse(w, response)
+	h.writeStandardResponse(w, http.StatusCreated, "/login", response)
 }
 
 // GetMe returns current user information
@@ -556,6 +548,11 @@ func (h *APIHandlers) GetHealth(w http.ResponseWriter, r *http.Request) {
 
 // writeSuccessResponse writes a successful JSON response with proper headers
 func (h *APIHandlers) writeSuccessResponse(w http.ResponseWriter, data interface{}) {
+	h.writeSuccessResponseWithStatus(w, http.StatusOK, "", data)
+}
+
+// writeSuccessResponseWithStatus writes a successful JSON response with custom status
+func (h *APIHandlers) writeSuccessResponseWithStatus(w http.ResponseWriter, statusCode int, resource string, data interface{}) {
 	// Set development-friendly headers
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
@@ -566,14 +563,55 @@ func (h *APIHandlers) writeSuccessResponse(w http.ResponseWriter, data interface
 	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
 
-	w.WriteHeader(http.StatusOK)
+	w.WriteHeader(statusCode)
 
 	response := map[string]interface{}{
-		"success":     true,
-		"status_code": http.StatusOK,
-		"status":      "OK",
-		"data":        data,
-		"timestamp":   time.Now().Format(time.RFC3339),
+		"http_status_code":    fmt.Sprintf("%d", statusCode),
+		"http_status_message": http.StatusText(statusCode),
+		"resource":            resource,
+		"app":                 "Go REST API Framework",
+		"timestamp":           time.Now().Format(time.RFC3339),
+		"response":            data,
+	}
+
+	json.NewEncoder(w).Encode(response)
+}
+
+// writeStandardResponse writes a response in the standard format
+func (h *APIHandlers) writeStandardResponse(w http.ResponseWriter, statusCode int, resource string, data interface{}) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.WriteHeader(statusCode)
+
+	response := map[string]interface{}{
+		"http_status_code":    fmt.Sprintf("%d", statusCode),
+		"http_status_message": http.StatusText(statusCode),
+		"resource":            resource,
+		"app":                 "Go REST API Framework",
+		"timestamp":           time.Now().Format(time.RFC3339),
+		"response":            data,
+	}
+
+	json.NewEncoder(w).Encode(response)
+}
+
+// writeStandardError writes an error response in the standard format
+func (h *APIHandlers) writeStandardError(w http.ResponseWriter, statusCode int, resource, message string) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.WriteHeader(statusCode)
+
+	response := map[string]interface{}{
+		"http_status_code":    fmt.Sprintf("%d", statusCode),
+		"http_status_message": http.StatusText(statusCode),
+		"resource":            resource,
+		"app":                 "Go REST API Framework",
+		"timestamp":           time.Now().Format(time.RFC3339),
+		"response": map[string]interface{}{
+			"error": map[string]interface{}{
+				"message": message,
+			},
+		},
 	}
 
 	json.NewEncoder(w).Encode(response)
