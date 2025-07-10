@@ -43,6 +43,7 @@ gcloud services enable containerregistry.googleapis.com
 
 # Build and deploy using Cloud Build
 echo -e "${YELLOW}🏗️  Building and deploying with Cloud Build...${NC}"
+echo -e "${YELLOW}📋 Configuration: 128Mi memory, 0-1 instances, gen2 execution${NC}"
 gcloud builds submit --config cloudbuild.yaml
 
 # Get the service URL
