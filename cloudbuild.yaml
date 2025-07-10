@@ -34,7 +34,7 @@ steps:
       '--timeout', '300',
       '--set-env-vars', 'LOG_LEVEL=info',
       '--no-cpu-throttling',
-      '--execution-environment', 'gen2'
+      '--execution-environment', 'gen1'
     ]
 
 # Store images in Container Registry
