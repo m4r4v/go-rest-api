@@ -21,20 +21,18 @@ steps:
     entrypoint: gcloud
     args: [
       'run', 'deploy', 'go-rest-api',
-      '--image', 'gcr.io/$PROJECT_ID/go-rest-api:$COMMIT_SHA',
-      '--region', 'us-central1',
-      '--platform', 'managed',
+      '--image=gcr.io/$PROJECT_ID/go-rest-api:$COMMIT_SHA',
+      '--region=us-central1',
+      '--platform=managed',
       '--allow-unauthenticated',
-      '--port', '8080',
-      '--memory', '128Mi',
-      '--cpu', '1',
-      '--concurrency', '80',
-      '--min-instances', '0',
-      '--max-instances', '1',
-      '--timeout', '300',
-      '--set-env-vars', 'LOG_LEVEL=info',
-      '--no-cpu-throttling',
-      '--execution-environment', 'gen1'
+      '--port=8080',
+      '--memory=128Mi',
+      '--cpu=1',
+      '--concurrency=80',
+      '--min-instances=0',
+      '--max-instances=1',
+      '--timeout=300',
+      '--execution-environment=gen1'
     ]
 
 # Store images in Container Registry
