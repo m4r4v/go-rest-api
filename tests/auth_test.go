@@ -16,7 +16,7 @@ func TestAuthService(t *testing.T) {
 		BcryptCost:    4, // Lower cost for faster tests
 	}
 
-	authService := auth.NewAuthService(cfg)
+	authService := auth.NewAuthService(cfg.JWTSecret, cfg.JWTExpiration, cfg.BcryptCost)
 
 	t.Run("HashPassword", func(t *testing.T) {
 		password := "testpassword123"

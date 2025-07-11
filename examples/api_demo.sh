@@ -15,7 +15,7 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
-API_BASE="http://localhost:8080/v1"
+API_BASE="http://localhost:8080"
 
 echo -e "${BLUE}Starting API Demo...${NC}"
 echo ""
@@ -43,18 +43,18 @@ make_request() {
     echo ""
 }
 
-echo -e "${BLUE}1. Testing User Registration${NC}"
+echo -e "${BLUE}1. Testing Initial Setup${NC}"
 echo "----------------------------------------"
-make_request "POST" "/auth/register" '{"username": "demouser", "email": "demo@example.com", "password": "password123"}'
+make_request "POST" "/setup" '{"username": "admin", "email": "admin@example.com", "password": "password123"}'
 
 echo -e "${BLUE}2. Testing User Login${NC}"
 echo "----------------------------------------"
-login_response=$(curl -s -X POST "$API_BASE/auth/login" -H "Content-Type: application/json" -d '{"username": "admin", "password": "password123"}')
+login_response=$(curl -s -X POST "$API_BASE/login" -H "Content-Type: application/json" -d '{"username": "admin", "password": "password123"}')
 echo -e "${GREEN}Login Response:${NC}"
 echo "$login_response" | python3 -m json.tool 2>/dev/null || echo "$login_response"
 
 # Extract token from response
-token=$(echo "$login_response" | python3 -c "import sys, json; print(json.load(sys.stdin)['data']['token'])" 2>/dev/null)
+token=$(echo "$login_response" | python3 -c "import sys, json; print(json.load(sys.stdin)['response']['token'])" 2>/dev/null)
 
 if [ ! -z "$token" ]; then
     echo -e "${GREEN}Token extracted successfully!${NC}"
@@ -64,21 +64,21 @@ if [ ! -z "$token" ]; then
     echo "----------------------------------------"
     make_request "GET" "/health" "" "-H \"Authorization: Bearer $token\""
     
-    echo -e "${BLUE}4. Testing User List${NC}"
+    echo -e "${BLUE}4. Testing User Profile${NC}"
     echo "----------------------------------------"
-    make_request "GET" "/users" "" "-H \"Authorization: Bearer $token\""
+    make_request "GET" "/v1/users/me" "" "-H \"Authorization: Bearer $token\""
     
-    echo -e "${BLUE}5. Testing Specific User${NC}"
+    echo -e "${BLUE}5. Testing Ping Endpoint${NC}"
     echo "----------------------------------------"
-    make_request "GET" "/users/1" "" "-H \"Authorization: Bearer $token\""
+    make_request "GET" "/v1/ping" "" "-H \"Authorization: Bearer $token\""
     
     echo -e "${BLUE}6. Testing Admin Endpoint${NC}"
     echo "----------------------------------------"
-    make_request "GET" "/admin/users?page=1&per_page=5" "" "-H \"Authorization: Bearer $token\""
+    make_request "GET" "/v1/admin/users" "" "-H \"Authorization: Bearer $token\""
     
     echo -e "${BLUE}7. Testing User Update${NC}"
     echo "----------------------------------------"
-    make_request "PUT" "/users/1" '{"username": "updated_admin", "email": "admin_updated@example.com"}' "-H \"Authorization: Bearer $token\""
+    make_request "PUT" "/v1/users/me" '{"email": "admin_updated@example.com"}' "-H \"Authorization: Bearer $token\""
     
 else
     echo -e "${RED}Failed to extract token from login response${NC}"
@@ -90,7 +90,7 @@ make_request "GET" "/health" ""
 
 echo -e "${BLUE}9. Testing Validation Error${NC}"
 echo "----------------------------------------"
-make_request "POST" "/auth/login" '{"username": "", "password": "123"}'
+make_request "POST" "/login" '{"username": "", "password": "123"}'
 
 echo -e "${BLUE}10. Testing Invalid Endpoint${NC}"
 echo "----------------------------------------"
