@@ -2,8 +2,9 @@
 .git
 .gitignore
 
-# Documentation
-README.md
+# Documentation (exclude from container, but keep README.md in repo)
+README_FRAMEWORK.md
+docs/
 LICENSE
 
 # Environment files

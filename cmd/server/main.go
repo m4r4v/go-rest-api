@@ -102,40 +102,21 @@ func setupRoutes(apiHandlers *handlers.APIHandlers, authService *auth.AuthServic
 	// Public endpoints (no authentication required)
 
 	// /setup - Setup SuperAdmin account (POST only)
-	router.HandleFunc("/setup", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			writeStandardError(w, http.StatusMethodNotAllowed, "/setup", "Method not allowed")
-			return
-		}
-		apiHandlers.Setup(w, r)
-	}).Methods("POST", "OPTIONS")
+	router.HandleFunc("/setup", apiHandlers.Setup).Methods("POST", "OPTIONS")
 
 	// /login - User authentication (POST only)
-	router.HandleFunc("/login", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			writeStandardError(w, http.StatusMethodNotAllowed, "/login", "Method not allowed")
-			return
-		}
-		apiHandlers.Login(w, r)
-	}).Methods("POST", "OPTIONS")
+	router.HandleFunc("/login", apiHandlers.Login).Methods("POST", "OPTIONS")
 
 	// /status - Server status check (GET only)
-	router.HandleFunc("/status", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			writeStandardError(w, http.StatusMethodNotAllowed, "/status", "Method not allowed")
-			return
-		}
-		statusHandler(w, r)
-	}).Methods("GET", "OPTIONS")
+	router.HandleFunc("/status", statusHandler).Methods("GET", "OPTIONS")
 
 	// /v1/ping - Sample resource (GET only)
-	router.HandleFunc("/v1/ping", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			writeStandardError(w, http.StatusMethodNotAllowed, "/v1/ping", "Method not allowed")
-			return
-		}
-		pingHandler(w, r)
-	}).Methods("GET", "OPTIONS")
+	router.HandleFunc("/v1/ping", pingHandler).Methods("GET", "OPTIONS")
+
+	// Add method not allowed handler for better error responses
+	router.MethodNotAllowedHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		writeStandardError(w, http.StatusMethodNotAllowed, r.URL.Path, "Method not allowed")
+	})
 
 	// Protected routes (require authentication)
 	protected := router.PathPrefix("/v1").Subrouter()
@@ -158,6 +139,7 @@ func setupRoutes(apiHandlers *handlers.APIHandlers, authService *auth.AuthServic
 
 	admin.HandleFunc("/users", apiHandlers.ListUsers).Methods("GET")
 	admin.HandleFunc("/users", apiHandlers.CreateUser).Methods("POST")
+	admin.HandleFunc("/users/{id}", apiHandlers.GetUserByID).Methods("GET")
 	admin.HandleFunc("/users/{id}", apiHandlers.UpdateUserByAdmin).Methods("PUT")
 	admin.HandleFunc("/users/{id}", apiHandlers.DeleteUser).Methods("DELETE")
 

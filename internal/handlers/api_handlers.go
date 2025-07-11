@@ -59,13 +59,14 @@ func (h *APIHandlers) Setup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Create admin user
+	// Create super admin user
 	adminUser := &models.User{
-		ID:       "1",
-		Username: req.Username,
-		Email:    req.Email,
-		Password: hashedPassword,
-		Role:     "admin",
+		ID:        "1",
+		Username:  req.Username,
+		Email:     req.Email,
+		Password:  hashedPassword,
+		Role:      "super_admin",
+		CreatedBy: "", // Super admin has no creator
 	}
 
 	// Save admin user
@@ -113,8 +114,11 @@ func (h *APIHandlers) Login(w http.ResponseWriter, r *http.Request) {
 
 	// Generate JWT token
 	roles := []string{"user"}
-	if user.Role == "admin" {
+	if user.Role == "admin" || user.Role == "super_admin" {
 		roles = append(roles, "admin")
+	}
+	if user.Role == "super_admin" {
+		roles = append(roles, "super_admin")
 	}
 
 	token, err := h.authService.GenerateToken(user.ID, user.Username, roles)
@@ -149,15 +153,39 @@ func (h *APIHandlers) GetMe(w http.ResponseWriter, r *http.Request) {
 
 // CreateUser creates a new user (admin only)
 func (h *APIHandlers) CreateUser(w http.ResponseWriter, r *http.Request) {
+	claims := auth.GetClaimsFromContext(r.Context())
+
 	var req struct {
 		Username string `json:"username" validate:"required,min=3,max=50"`
 		Email    string `json:"email" validate:"required,email"`
 		Password string `json:"password" validate:"required,min=6"`
-		Role     string `json:"role" validate:"required,oneof=admin user"`
+		Role     string `json:"role" validate:"required,oneof=super_admin admin user"`
 	}
 
 	if err := validation.ValidateJSON(r, &req); err != nil {
 		h.writeErrorResponse(w, err)
+		return
+	}
+
+	// Get current user to check permissions
+	currentUser, err := h.db.GetUserByID(claims.UserID)
+	if err != nil {
+		appErr := errors.Forbidden("Invalid user context")
+		h.writeErrorResponse(w, appErr)
+		return
+	}
+
+	// Only super_admin can create admin users
+	if req.Role == "admin" && !currentUser.IsSuperAdmin() {
+		appErr := errors.Forbidden("Only super admin can create admin users")
+		h.writeErrorResponse(w, appErr)
+		return
+	}
+
+	// Only super_admin can create super_admin users
+	if req.Role == "super_admin" && !currentUser.IsSuperAdmin() {
+		appErr := errors.Forbidden("Only super admin can create super admin users")
+		h.writeErrorResponse(w, appErr)
 		return
 	}
 
@@ -173,13 +201,19 @@ func (h *APIHandlers) CreateUser(w http.ResponseWriter, r *http.Request) {
 	// Generate new user ID
 	userID := uuid.New().String()
 
-	// Create user
+	// Create user with proper ownership
 	user := &models.User{
-		ID:       userID,
-		Username: req.Username,
-		Email:    req.Email,
-		Password: hashedPassword,
-		Role:     req.Role,
+		ID:        userID,
+		Username:  req.Username,
+		Email:     req.Email,
+		Password:  hashedPassword,
+		Role:      req.Role,
+		CreatedBy: claims.UserID, // Set creator
+	}
+
+	// Super admin users have no creator
+	if req.Role == "super_admin" {
+		user.CreatedBy = ""
 	}
 
 	// Save user
@@ -195,9 +229,9 @@ func (h *APIHandlers) CreateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	logger.Infof("User created by admin: %s (Role: %s)", user.Username, user.Role)
+	logger.Infof("User created by %s: %s (Role: %s)", claims.Username, user.Username, user.Role)
 
-	h.writeSuccessResponse(w, user.ToResponse())
+	h.writeStandardizedResponse(w, r, http.StatusCreated, "User created successfully", user.ToResponse())
 }
 
 // ListUsers returns all users (admin only)
@@ -210,6 +244,22 @@ func (h *APIHandlers) ListUsers(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.writeSuccessResponse(w, response)
+}
+
+// GetUserByID returns a specific user by ID (admin only)
+func (h *APIHandlers) GetUserByID(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	userID := vars["id"]
+
+	// Find user
+	user, err := h.db.GetUserByID(userID)
+	if err != nil {
+		appErr := errors.NotFound("User not found")
+		h.writeErrorResponse(w, appErr)
+		return
+	}
+
+	h.writeSuccessResponse(w, user.ToResponse())
 }
 
 // UpdateUserByAdmin updates any user (admin only)
@@ -269,7 +319,7 @@ func (h *APIHandlers) UpdateUserByAdmin(w http.ResponseWriter, r *http.Request) 
 
 	logger.Infof("User updated by admin: %s", updatedUser.Username)
 
-	h.writeSuccessResponse(w, updatedUser.ToResponse())
+	h.writeStandardizedResponse(w, r, http.StatusOK, "User updated successfully", updatedUser.ToResponse())
 }
 
 // DeleteUser deletes a user (admin only)
@@ -295,12 +345,7 @@ func (h *APIHandlers) DeleteUser(w http.ResponseWriter, r *http.Request) {
 
 	logger.Infof("User deleted by admin: %s", user.Username)
 
-	response := map[string]interface{}{
-		"message": "User deleted successfully",
-		"user_id": userID,
-	}
-
-	h.writeSuccessResponse(w, response)
+	h.writeStandardizedResponse(w, r, http.StatusOK, "User deleted successfully", map[string]interface{}{"user_id": userID})
 }
 
 // User Self-Management Endpoints
@@ -356,7 +401,7 @@ func (h *APIHandlers) UpdateMe(w http.ResponseWriter, r *http.Request) {
 
 	logger.Infof("User updated own profile: %s", updatedUser.Username)
 
-	h.writeSuccessResponse(w, updatedUser.ToResponse())
+	h.writeStandardizedResponse(w, r, http.StatusCreated, "Profile updated successfully", updatedUser.ToResponse())
 }
 
 // Resource Management Endpoints
@@ -395,7 +440,7 @@ func (h *APIHandlers) CreateResource(w http.ResponseWriter, r *http.Request) {
 
 	logger.Infof("Resource created: %s by user %s", resource.Name, claims.Username)
 
-	h.writeSuccessResponse(w, resource)
+	h.writeStandardizedResponse(w, r, http.StatusCreated, "Resource created successfully", resource)
 }
 
 // ListResources returns all resources
@@ -476,7 +521,7 @@ func (h *APIHandlers) UpdateResource(w http.ResponseWriter, r *http.Request) {
 
 	logger.Infof("Resource updated: %s by user %s", updatedResource.Name, claims.Username)
 
-	h.writeSuccessResponse(w, updatedResource)
+	h.writeStandardizedResponse(w, r, http.StatusOK, "Resource updated successfully", updatedResource)
 }
 
 // DeleteResource deletes a resource (creator or admin only)
@@ -510,12 +555,7 @@ func (h *APIHandlers) DeleteResource(w http.ResponseWriter, r *http.Request) {
 
 	logger.Infof("Resource deleted: %s by user %s", resource.Name, claims.Username)
 
-	response := map[string]interface{}{
-		"message":     "Resource deleted successfully",
-		"resource_id": resourceID,
-	}
-
-	h.writeSuccessResponse(w, response)
+	h.writeStandardizedResponse(w, r, http.StatusOK, "Resource deleted successfully", map[string]interface{}{"resource_id": resourceID})
 }
 
 // System Endpoints
@@ -546,22 +586,19 @@ func (h *APIHandlers) GetHealth(w http.ResponseWriter, r *http.Request) {
 
 // Helper methods
 
-// writeSuccessResponse writes a successful JSON response with proper headers
+// writeSuccessResponse writes a successful JSON response with proper headers (legacy format)
 func (h *APIHandlers) writeSuccessResponse(w http.ResponseWriter, data interface{}) {
 	h.writeSuccessResponseWithStatus(w, http.StatusOK, "", data)
 }
 
-// writeSuccessResponseWithStatus writes a successful JSON response with custom status
+// writeSuccessResponseWithStatus writes a successful JSON response with custom status (legacy format)
 func (h *APIHandlers) writeSuccessResponseWithStatus(w http.ResponseWriter, statusCode int, resource string, data interface{}) {
-	// Set development-friendly headers
+	// Set security headers (CORS is handled by middleware)
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
 	w.Header().Set("Pragma", "no-cache")
 	w.Header().Set("Expires", "0")
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
 
 	w.WriteHeader(statusCode)
 
@@ -572,6 +609,68 @@ func (h *APIHandlers) writeSuccessResponseWithStatus(w http.ResponseWriter, stat
 		"app":                 "Go REST API Framework",
 		"timestamp":           time.Now().Format(time.RFC3339),
 		"response":            data,
+	}
+
+	json.NewEncoder(w).Encode(response)
+}
+
+// writeStandardizedResponse writes a response in the new standardized format
+func (h *APIHandlers) writeStandardizedResponse(w http.ResponseWriter, r *http.Request, statusCode int, message string, data interface{}) {
+	// Set security headers (CORS is handled by middleware)
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+	w.Header().Set("Pragma", "no-cache")
+	w.Header().Set("Expires", "0")
+	w.Header().Set("X-API-Framework", "Go-REST-API-v2.0")
+
+	w.WriteHeader(statusCode)
+
+	// Get user context if available
+	var username, userID interface{}
+	username = nil
+	userID = nil
+
+	if claims := auth.GetClaimsFromContext(r.Context()); claims != nil {
+		username = claims.Username
+		userID = claims.UserID
+	}
+
+	// Build response data
+	responseData := map[string]interface{}{}
+	if message != "" {
+		responseData["message"] = message
+	}
+	if data != nil {
+		// If data is a user response, nest it under "user" key
+		if userResp, ok := data.(models.UserResponse); ok {
+			responseData["user"] = userResp
+		} else {
+			// For other data types, include directly or under appropriate key
+			switch v := data.(type) {
+			case *models.Resource:
+				responseData["resource"] = v
+			case map[string]interface{}:
+				// Merge map data into response
+				for k, val := range v {
+					responseData[k] = val
+				}
+			default:
+				responseData["data"] = data
+			}
+		}
+	}
+
+	response := map[string]interface{}{
+		"success":     true,
+		"status_code": statusCode,
+		"status":      http.StatusText(statusCode),
+		"timestamp":   time.Now().Format(time.RFC3339),
+		"endpoint":    r.URL.Path,
+		"method":      r.Method,
+		"user":        username,
+		"user_id":     userID,
+		"response":    responseData,
 	}
 
 	json.NewEncoder(w).Encode(response)
@@ -619,15 +718,12 @@ func (h *APIHandlers) writeStandardError(w http.ResponseWriter, statusCode int, 
 
 // writeErrorResponse writes an error JSON response with proper headers
 func (h *APIHandlers) writeErrorResponse(w http.ResponseWriter, appErr *errors.AppError) {
-	// Set development-friendly headers
+	// Set security headers (CORS is handled by middleware)
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
 	w.Header().Set("Pragma", "no-cache")
 	w.Header().Set("Expires", "0")
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
 
 	w.WriteHeader(appErr.Status)
 
@@ -660,15 +756,12 @@ func (h *APIHandlers) AddDynamicEndpoint(router *mux.Router, endpoint, method st
 		// Get authenticated user from context (set by auth middleware)
 		claims := auth.GetClaimsFromContext(r.Context())
 
-		// Set development-friendly headers
+		// Set security headers (CORS is handled by middleware)
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
 		w.Header().Set("Pragma", "no-cache")
 		w.Header().Set("Expires", "0")
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
 		w.Header().Set("X-API-Framework", "Go-REST-API-v2.0")
 		w.Header().Set("X-Dynamic-Endpoint", "true")
 

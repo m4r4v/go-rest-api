@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"os"
+	"strings"
 	"time"
 
 	"github.com/m4r4v/go-rest-api/pkg/auth"
@@ -95,13 +97,21 @@ func RecoveryMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-// CORSMiddleware handles CORS headers
+// CORSMiddleware handles CORS headers with production-safe configuration
 func CORSMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
+		// Get allowed origins from environment variable, default to localhost for development
+		allowedOrigins := getEnv("CORS_ALLOWED_ORIGINS", "http://localhost:3000,http://localhost:8080")
+
+		origin := r.Header.Get("Origin")
+		if origin != "" && isAllowedOrigin(origin, allowedOrigins) {
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+		}
+
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
-		w.Header().Set("Access-Control-Expose-Headers", "*")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With")
+		w.Header().Set("Access-Control-Allow-Credentials", "true")
+		w.Header().Set("Access-Control-Max-Age", "86400") // 24 hours
 
 		if r.Method == "OPTIONS" {
 			w.WriteHeader(http.StatusOK)
@@ -144,4 +154,23 @@ func writeErrorResponse(w http.ResponseWriter, appErr *errors.AppError) {
 	}
 
 	json.NewEncoder(w).Encode(response)
+}
+
+// getEnv gets an environment variable with a default value
+func getEnv(key, defaultValue string) string {
+	if value := os.Getenv(key); value != "" {
+		return value
+	}
+	return defaultValue
+}
+
+// isAllowedOrigin checks if an origin is in the allowed origins list
+func isAllowedOrigin(origin, allowedOrigins string) bool {
+	origins := strings.Split(allowedOrigins, ",")
+	for _, allowed := range origins {
+		if strings.TrimSpace(allowed) == origin {
+			return true
+		}
+	}
+	return false
 }
