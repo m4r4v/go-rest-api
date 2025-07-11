@@ -693,4 +693,4 @@ For questions, issues, or contributions:
 
 ---
 
-**Built with ❤️ using Go**
+Built with ❤️ using **Go** by **[m4r4v](https://github.com/m4r4v)**
