@@ -20,7 +20,7 @@ import (
 	"github.com/m4r4v/go-rest-api/pkg/middleware"
 )
 
-// StandardResponse represents the standard API response format
+// Standard Response represents the standard API response format
 type StandardResponse struct {
 	HTTPStatusCode    string      `json:"http_status_code"`
 	HTTPStatusMessage string      `json:"http_status_message"`
